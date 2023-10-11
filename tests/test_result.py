@@ -1,7 +1,7 @@
 from typing import Any, Dict
 from unittest import TestCase
 
-from entityshape import Result
+from entityshape.models.result import Result
 
 hiking_path_with_1_missing_required_property: Dict[Any, Any] = {
     "error": "",

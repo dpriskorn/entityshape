@@ -100,7 +100,6 @@ class Result(BaseModel):
             except ValueError:
                 # Ignore responses we cannot predict
                 logger.warning(f"Ignoring statement response: {value.response}")
-                pass
 
     def __find_required_properties__(self):
         for property_ in self.properties:

@@ -2,7 +2,7 @@ class LangError(BaseException):
     pass
 
 
-class QidError(BaseException):
+class EntityIdError(BaseException):
     pass
 
 
@@ -19,4 +19,12 @@ class WikibaseEntitySchemaDownloadError(BaseException):
 
 
 class WikibasePropertiesDownloadError(BaseException):
+    pass
+
+
+class NoEntitySchemaDataError(BaseException):
+    pass
+
+
+class MissingInformationError(BaseException):
     pass

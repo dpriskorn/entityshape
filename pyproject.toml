@@ -15,10 +15,13 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-pydantic = "^1.10.9"
+pydantic = "^2.4.2"
 python = ">=3.8,<=3.12"
 requests = "^2.28.1"
 wikibaseintegrator = "^0.12.4"
+aiohttp = "^3.8.6"
+asyncio = "^3.4.3"
+rich = "^13.6.0"
 
 [tool.poetry.group.dev.dependencies]
 rich = "^13.4.2"

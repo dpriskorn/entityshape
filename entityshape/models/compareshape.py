@@ -3,13 +3,18 @@ Copyright 2023 Dennis Priskorn
 Copyright 2021 Mark Tully
 Compares a json shape from shape.py with wikidata json
 """
+import logging
+from typing import Any, Dict
+
 import requests
 from requests import Response
 
 from entityshape.exceptions import (
+    MissingInformationError,
     WikibaseEntitySchemaDownloadError,
-    WikibasePropertiesDownloadError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CompareShape:
@@ -29,20 +34,24 @@ class CompareShape:
         self,
         shape: dict,
         entity: str,
+        entity_data: Dict[str, Any],
         language: str,
         mediawiki_api_url: str,
         wikibase_url: str,
     ):
         self._entity: str = entity
+        self.entity_data = entity_data
         self._shape: dict = shape
         self.mediawiki_api_url = mediawiki_api_url
         self.wikibase_url = wikibase_url
         self._property_responses: dict = {}
 
-        self._get_entity_json()
-        if self._entities["entities"][self._entity]:
-            self._get_props(self._entities["entities"][self._entity]["claims"])
-        self._get_property_names(language)
+        # self._get_entity_json()
+        if not self.entity_data:
+            raise MissingInformationError()
+        if self.entity_data["entities"][self._entity]:
+            self._get_props(self.entity_data["entities"][self._entity]["claims"])
+        # self._get_property_names(language)
         self._compare_statements()
         self._compare_properties()
 
@@ -68,9 +77,12 @@ class CompareShape:
         general: dict = {}
         properties: list = ["lexicalCategory", "language"]
         for item in properties:
-            if item in self._shape and item in self._entities["entities"][self._entity]:
+            if (
+                item in self._shape
+                and item in self.entity_data["entities"][self._entity]
+            ):
                 expected: list = self._shape[item]["allowed"]
-                actual: str = self._entities["entities"][self._entity][item]
+                actual: str = self.entity_data["entities"][self._entity][item]
                 general[item] = "incorrect"
                 if actual in expected:
                     general[item] = "correct"
@@ -81,7 +93,7 @@ class CompareShape:
         Compares the statements in the entity to the schema
         """
         statements: dict = {}
-        claims: dict = self._entities["entities"][self._entity]["claims"]
+        claims: dict = self.entity_data["entities"][self._entity]["claims"]
         for claim in claims:
             statement_results: list = []
             property_statement_results: list = []
@@ -112,10 +124,12 @@ class CompareShape:
         properties: dict = {}
         for claim in self._props:
             response: str = "missing"
-            child: dict = {"name": self._names[claim], "necessity": "absent"}
+            # Disable use of _names because it slows the validation down
+            # child: dict = {"name": self._names[claim], "necessity": "absent"}
+            child: dict = {"name": "unknown", "necessity": "absent"}
             if claim in self._shape and "necessity" in self._shape[claim]:
                 child["necessity"] = self._shape[claim]["necessity"]
-            if claim in self._entities["entities"][self._entity]["claims"]:
+            if claim in self.entity_data["entities"][self._entity]["claims"]:
                 response = self._process_claim(claim, child)
             if response != "":
                 child["response"] = response
@@ -167,20 +181,6 @@ class CompareShape:
             cardinality = "not enough correct statements"
         return cardinality
 
-    def _get_entity_json(self):
-        """
-        Downloads the entity from wikidata
-        """
-        url: str = f"{self.wikibase_url}/wiki/Special:EntityData/{self._entity}.json"
-        response: Response = requests.get(url)
-        if response.status_code == 200:
-            self._entities = response.json()
-        else:
-            raise WikibaseEntitySchemaDownloadError(
-                f"Got {response.status_code} from {url}. "
-                f"Please check that the configuration is correct"
-            )
-
     def _get_props(self, claims: dict):
         """
         Gets a list of properties included in the entity
@@ -194,37 +194,39 @@ class CompareShape:
             if claim not in self._props and claim.startswith("P"):
                 self._props.append(claim)
 
-    def _get_property_names(self, language: str):
-        """
-        Gets the names of properties from wikidata
-        """
-        self._names: dict = {}
-        wikidata_property_list: list = [
-            self._props[i * 49 : (i + 1) * 49]
-            for i in range((len(self._props) + 48) // 48)
-        ]
-        for element in wikidata_property_list:
-            required_properties: str = "|".join(element)
-            url: str = (
-                f"{self.mediawiki_api_url}?action=wbgetentities&ids="
-                f"{required_properties}&props=labels&languages={language}&format=json"
-            )
-            response: Response = requests.get(url)
-            if response.status_code == 200:
-                json_text: dict = response.json()
-                print(url)
-                # print(json_text)
-            else:
-                raise WikibasePropertiesDownloadError(
-                    f"Got {response.status_code} from {url}"
-                )
-            for item in element:
-                try:
-                    self._names[json_text["entities"][item]["id"]] = json_text[
-                        "entities"
-                    ][item]["labels"][language]["value"]
-                except KeyError:
-                    self._names[json_text["entities"][item]["id"]] = ""
+    # def _get_property_names(self, language: str):
+    #     """
+    #     Gets the names of properties from wikidata
+    #     """
+    #     # Optimize this
+    #     self._names: dict = {}
+    #     # What is the purpose of this?
+    #     wikidata_property_list: list = [
+    #         self._props[i * 49 : (i + 1) * 49]
+    #         for i in range((len(self._props) + 48) // 48)
+    #     ]
+    #     for element in wikidata_property_list:
+    #         required_properties: str = "|".join(element)
+    #         url: str = (
+    #             f"{self.mediawiki_api_url}?action=wbgetentities&ids="
+    #             f"{required_properties}&props=labels&languages={language}&format=json"
+    #         )
+    #         response: Response = requests.get(url)
+    #         if response.status_code == 200:
+    #             json_text: dict = response.json()
+    #             print(url)
+    #             # print(json_text)
+    #         else:
+    #             raise WikibasePropertiesDownloadError(
+    #                 f"Got {response.status_code} from {url}"
+    #             )
+    #         for item in element:
+    #             try:
+    #                 self._names[json_text["entities"][item]["id"]] = json_text[
+    #                     "entities"
+    #                 ][item]["labels"][language]["value"]
+    #             except KeyError:
+    #                 self._names[json_text["entities"][item]["id"]] = ""
 
     def _process_allowed_in_shape_claim(self, claim, param):
         allowed = "correct"
@@ -246,10 +248,12 @@ class CompareShape:
             required_value: str = shape_claim["required"][required_property][0]
 
         query_entity: str = datavalue["value"]["id"]
+        # Why is this fetch needed?
         url: str = (
             f"https://www.wikidata.org/w/api.php?action=wbgetclaims"
             f"&entity={query_entity}&property={required_property}&format=json"
         )
+        logger.debug("Fetching: {url}")
         response: Response = requests.get(url)
         if response.status_code == 200:
             json_text: dict = response.json()

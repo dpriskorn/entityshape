@@ -4,32 +4,32 @@ Converts entityschema to json suitable for comparing with a wikidata item
 """
 import os
 import re
-from typing import Any, Match, Optional, Pattern, Union
+from typing import Any, Dict, Match, Optional, Pattern, Union
 
-import requests
+from pydantic import BaseModel
 
 
-class Shape:
+class Shape(BaseModel):
     """
     Produces a shape in the form of a json for a wikidata entityschema (e.g. E10)
 
-    :param schema: The identifier of the entityschema to be processed
     :param language: The language to get the schema name in
 
-    :return name: the name of the entityschema
     :return shape: a json representation of the entityschema
     """
 
-    def __init__(self, schema: str, language: str):
-        # self.name: str = ""
-        self.schema_shape: dict = {}
+    language: str
+    entity_schema_data: Dict[str, Any]
 
-        self._shapes: dict = {}
-        self._schema_shapes: dict = {}
-        self._language: str = language
-        self._default_shape_name: str = ""
+    # self.name: str = ""
+    schema_shape: dict = {}
 
-        self._get_schema_json(schema)
+    _shapes: dict = {}
+    _schema_shapes: dict = {}
+    _default_shape_name: str = ""
+
+    def start(self):
+        # self._get_schema_json(schema)
         self._strip_schema_comments()
         if self._schema_text != "":
             self._get_default_shape()
@@ -47,8 +47,8 @@ class Shape:
         Gets the name of the schema
         :return: the name of the schema
         """
-        if self._language in self._json_text["labels"]:
-            return self._json_text["labels"][self._language]
+        if self.language in self.entity_schema_data["labels"]:
+            return self.entity_schema_data["labels"][self.language]
         return ""
 
     def _translate_schema(self):
@@ -147,16 +147,6 @@ class Shape:
                 shape_json[wikidata_property] = {"extra": "allowed"}
         return shape_json
 
-    def _get_schema_json(self, schema):
-        """
-        Downloads the schema from wikidata
-
-        :param schema: the entityschema to be downloaded
-        """
-        url: str = f"https://www.wikidata.org/wiki/EntitySchema:{schema}?action=raw"
-        response = requests.get(url)
-        self._json_text: dict = response.json()
-
     def _strip_schema_comments(self):
         """
         Strips the comments out of the schema and converts parts we don't care about
@@ -164,7 +154,7 @@ class Shape:
         """
         schema_text: str = ""
         # remove comments from the schema
-        for line in self._json_text["schemaText"].splitlines():
+        for line in self.entity_schema_data["schemaText"].splitlines():
             head, _, _ = line.partition("# ")
             if line.startswith("#"):
                 head = ""

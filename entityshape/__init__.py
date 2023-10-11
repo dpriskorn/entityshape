@@ -1,71 +1,116 @@
+import asyncio
+import logging
 import re
-from typing import Any, Dict, Optional
+from re import Pattern
+from typing import Any, Dict, List
 
+import aiohttp
+import requests
 from pydantic import BaseModel
+from rich.console import Console
 
-from entityshape.exceptions import ApiError, EidError, LangError, QidError
-from entityshape.models.compareshape import CompareShape
-from entityshape.models.result import Result
-from entityshape.models.shape import Shape
+from entityshape.exceptions import (
+    ApiError,
+    EidError,
+    EntityIdError,
+    LangError,
+    NoEntitySchemaDataError,
+    WikibaseEntitySchemaDownloadError,
+)
+from entityshape.models.entity import Entity
+
+console = Console()
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class EntityShape(BaseModel):
-    """This class models the entityshape API
-    It has a default timeout of 10 seconds
+    """Downloads and validates Wikidata entities"""
 
-    The API currently only support items"""
-
-    entity_id: str = ""  # item or lexeme
-    eid: str = ""  # entityshape
+    entity_ids: List[str]
+    eid: str  # entityshape
     lang: str = "en"  # language defaults to English
-    result: Result = Result()
-    eid_regex = re.compile(r"E\d+")
-    entity_id_regex = re.compile(r"[QL]\d+")
-    compare_shape_result: Optional[Dict[str, Any]] = None
+    eid_regex: Pattern = re.compile(r"E\d+")
     wikibase_url: str = "http://www.wikidata.org"
     mediawiki_api_url: str = "https://www.wikidata.org/w/api.php"
     user_agent: str = "entityshape (https://github.com/dpriskorn/entityshape)"
+    entities: List[Entity] = []
+    entity_schema_data: Dict[str, Any] = {}
 
     def __check_inputs__(self):
-        if not self.lang:
-            raise LangError("We only support 2 and 3 letter language codes")
-        if not self.eid:
-            raise EidError("We need an entityshape EID")
+        if not 2 <= len(self.lang) <= 3:
+            raise LangError("Language code is not correct length")
         if not re.match(self.eid_regex, self.eid):
             raise EidError("EID has to be E followed by only numbers like this: E100")
-        if not self.entity_id:
-            raise QidError("We need an item QID")
-        if not re.match(self.entity_id_regex, self.entity_id):
-            raise QidError("QID has to be Q followed by only numbers like this: Q100")
+        if not self.entity_ids:
+            raise EntityIdError("We need entity ids")
+        # if not re.match(self.entity_id_regex, self.entity_id):
+        #     raise QidError("QID has to be Q followed by only numbers like this: Q100")
 
-    def validate_and_get_result(self) -> Result:
-        """This method checks if we got the 3 parameters we need and
-        gets the results and return them"""
-        self.__check_inputs__()
-        self.__validate__()
-        return self.__parse_result__()
-
-    def __validate__(self):
-        shape: Shape = Shape(self.eid, self.lang)
-        comparison: CompareShape = CompareShape(
-            shape.get_schema_shape(),
-            self.entity_id,
-            self.lang,
-            wikibase_url=self.wikibase_url,
-            mediawiki_api_url=self.mediawiki_api_url,
-        )
-        self.compare_shape_result = {}
-        self.compare_shape_result = {
-            "general": comparison.get_general(),
-            "properties": comparison.get_properties(),
-            "statements": comparison.get_statements(),
-        }
-
-    def __parse_result__(self) -> Result:
-        if self.compare_shape_result:
-            self.result = Result(**self.compare_shape_result)
-            self.result.lang = self.lang
-            self.result.analyze()
-            return self.result
+    def download_and_validate(self):
+        self.__check_inputs__()  # Check if inputs are valid
+        self.download_schema()
+        if not self.entity_schema_data:
+            raise NoEntitySchemaDataError("Got no entity schema data from Wikidata")
+        with console.status("Downloading entity json"):
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self.__download_json__())
+        print(f"Downloaded {len(self.entities)} entities")
+        if self.entities:
+            with console.status("Validating entities"):
+                [entity.check_and_validate() for entity in self.entities]
+            print("Validation finished")
         else:
-            return Result()
+            print("No entities to validate")
+
+    async def __download_json__(self) -> None:
+        """Get all the JSON data we need asynchronously"""
+        logger.debug("__download_json__: running")
+        async with aiohttp.ClientSession() as session:
+            # TODO add user agent
+            # Create tasks for downloading JSON data for each entity_id
+            tasks = [
+                self._get_entity_json(entity_id, session)
+                for entity_id in self.entity_ids
+            ]
+
+            # Gather and wait for all tasks to complete
+            await asyncio.gather(*tasks)
+            # self.json_responses = await asyncio.gather(*tasks)
+            # Handle results as needed
+            # We don't handle the results for now.
+
+    async def _get_entity_json(self, entity_id: str, session) -> None:
+        """
+        Downloads the entity from Wikidata asynchronously
+        """
+        logger.debug("_get_entity_json: running")
+        url = f"{self.wikibase_url}/wiki/Special:EntityData/{entity_id}.json"
+
+        async with session.get(url) as response:
+            if response.status == 200:
+                entity_data = await response.json()
+                self.entities.append(
+                    Entity(
+                        entity_id=entity_id,
+                        entity_data=entity_data,
+                        eid=self.eid,
+                        entity_schema_data=self.entity_schema_data,
+                    )
+                )
+            else:
+                raise WikibaseEntitySchemaDownloadError(
+                    f"Got {response.status} from {url}. "
+                    f"Please check that the configuration is correct"
+                )
+
+    def download_schema(self):
+        """
+        Downloads the schema from wikidata
+        """
+        url: str = f"https://www.wikidata.org/wiki/EntitySchema:{self.eid}?action=raw"
+        # todo add user agent
+        response = requests.get(url)
+        if response.status_code == 404:
+            raise WikibaseEntitySchemaDownloadError()
+        self.entity_schema_data: dict = response.json()
